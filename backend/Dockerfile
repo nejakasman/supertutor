@@ -11,7 +11,6 @@ COPY app.js ./
 COPY models ./models
 COPY routes ./routes
 COPY views ./views
-COPY scripts ./scripts
 
 EXPOSE 3000
 
