@@ -1,0 +1,160 @@
+
+name: SuperTutor CI/CD
+
+on:
+  push:
+    branches:
+      - main
+      - feature/ci-cd-pipeline
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  lint:
+    name: Preverjanje kode
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Prenos kode
+        uses: actions/checkout@v4
+
+      - name: Nastavitev Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Namestitev odvisnosti
+        working-directory: backend
+        run: npm ci
+
+      - name: ESLint
+        working-directory: backend
+        run: npm run lint
+
+  build:
+    name: Gradnja aplikacije
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Prenos kode
+        uses: actions/checkout@v4
+
+      - name: Nastavitev Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Namestitev odvisnosti
+        working-directory: backend
+        run: npm ci
+
+      - name: Preverjanje gradnje
+        working-directory: backend
+        run: npm run build
+
+      - name: Shranjevanje build artefakta
+        uses: actions/upload-artifact@v4
+        with:
+          name: supertutor-build
+          path: |
+            backend/app.js
+            backend/models/
+            backend/routes/
+            backend/views/
+            backend/scripts/
+            backend/package.json
+            backend/package-lock.json
+          if-no-files-found: error
+
+      - name: Gradnja Docker slike
+        run: docker build -t supertutor:${{ github.sha }} ./backend
+
+      - name: Shranjevanje Docker slike
+        run: docker save -o supertutor-image.tar supertutor:${{ github.sha }}
+
+      - name: Shranjevanje Docker artefakta
+        uses: actions/upload-artifact@v4
+        with:
+          name: supertutor-docker-image
+          path: supertutor-image.tar
+          if-no-files-found: error
+
+  test:
+    name: Testiranje in pokritost kode
+    needs: [lint, build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Prenos kode
+        uses: actions/checkout@v4
+
+      - name: Nastavitev Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Namestitev odvisnosti
+        working-directory: backend
+        run: npm ci
+
+      - name: Izvajanje testov
+        working-directory: backend
+        run: npm run test:coverage
+
+      - name: Shranjevanje poročila o pokritosti
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supertutor-coverage
+          path: backend/coverage/
+          if-no-files-found: warn
+
+  deploy:
+    name: Namestitev aplikacije
+    needs: [lint, build, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    environment: production
+
+    env:
+      RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Prenos Docker artefakta
+        uses: actions/download-artifact@v4
+        with:
+          name: supertutor-docker-image
+
+      - name: Nalaganje Docker slike
+        run: docker load -i supertutor-image.tar
+
+      - name: Prijava v GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Označevanje Docker slike
+        run: |
+          docker tag supertutor:${{ github.sha }} ghcr.io/${{ github.repository }}:latest
+          docker tag supertutor:${{ github.sha }} ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+      - name: Objava Docker slike
+        run: |
+          docker push ghcr.io/${{ github.repository }}:latest
+          docker push ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+      - name: Sprožitev namestitve na Renderju
+        if: ${{ env.RENDER_DEPLOY_HOOK_URL != '' }}
+        run: curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
