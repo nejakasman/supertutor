@@ -6,7 +6,8 @@
   "scripts": {
     "test": "node --test",
     "test:coverage": "c8 --exclude 'test/**' --reporter=text --reporter=lcov --reporter=html node --test",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "build": "find . -path './node_modules' -prune -o -path './coverage' -prune -o -name '*.js' -print0 | xargs -0 -n1 node --check"
   },
   "keywords": [],
   "author": "",
