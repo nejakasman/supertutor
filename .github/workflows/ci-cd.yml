@@ -71,6 +71,19 @@ jobs:
             backend/package-lock.json
           if-no-files-found: error
 
+      - name: Gradnja Docker slike
+        run: docker build -t supertutor:${{ github.sha }} ./backend
+
+      - name: Shranjevanje Docker slike
+        run: docker save -o supertutor-image.tar supertutor:${{ github.sha }}
+
+      - name: Shranjevanje Docker artefakta
+        uses: actions/upload-artifact@v4
+        with:
+          name: supertutor-docker-image
+          path: supertutor-image.tar
+          if-no-files-found: error
+
   test:
     name: Testiranje in pokritost kode
     needs: [lint, build]
@@ -102,3 +115,44 @@ jobs:
           name: supertutor-coverage
           path: backend/coverage/
           if-no-files-found: warn
+
+  deploy:
+    name: Namestitev aplikacije
+    needs: [lint, build, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    environment: production
+
+    env:
+      RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Prenos Docker artefakta
+        uses: actions/download-artifact@v4
+        with:
+          name: supertutor-docker-image
+
+      - name: Nalaganje Docker slike
+        run: docker load -i supertutor-image.tar
+
+      - name: Prijava v GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Označevanje Docker slike
+        run: |
+          docker tag supertutor:${{ github.sha }} ghcr.io/${{ github.repository }}:latest
+          docker tag supertutor:${{ github.sha }} ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+      - name: Objava Docker slike
+        run: |
+          docker push ghcr.io/${{ github.repository }}:latest
+          docker push ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+      - name: Sprožitev namestitve na Renderju
+        if: ${{ env.RENDER_DEPLOY_HOOK_URL != '' }}
+        run: curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
