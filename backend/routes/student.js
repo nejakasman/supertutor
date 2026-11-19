@@ -80,3 +80,5 @@ router.post('/student/termin/:id/odpovej', zahtevajStudenta, (req, res) => {
 });
 
 module.exports = router;
+
+const namernaNapaka = ;
